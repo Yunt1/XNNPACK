@@ -57,9 +57,16 @@ ynn_status ynn_define_broadcast_like(ynn_subgraph_t subgraph, size_t num_axes,
       output_extents.resize(d + 1);
     }
     slinky::expr& output_extent = output_extents[d];
-    if (!output_extent.defined() || slinky::is_one(output_extent)) {
+    // If one extent is larger than the other, they cannot be equal, so the
+    // broadcast is only valid when the smaller extent is 1 (except for (0, 1)
+    // and (1, 0), which are valid broadcasts with output extent 0). Requiring
+    // a difference >= 2 rules out that zero-extent case (since (0, >= 2) is
+    // invalid), leaving 1 as the only valid value for the smaller extent.
+    if (!output_extent.defined() || slinky::is_one(output_extent) ||
+        slinky::prove_true(template_extent - output_extent >= 2)) {
       output_extent = template_extent;
-    } else if (!slinky::prove_true(template_extent == output_extent)) {
+    } else if (!slinky::prove_true(template_extent == output_extent) &&
+               !slinky::prove_true(output_extent - template_extent >= 2)) {
       output_extent = subgraph->globals.get(
           select(template_extent != 1, template_extent, output_extent), "b");
     }

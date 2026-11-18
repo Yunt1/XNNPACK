@@ -211,4 +211,47 @@ TEST(BroadcastLike, defined_output_has_template_rank) {
   EXPECT_THAT(output, testing::ElementsAreArray(input));
 }
 
+TEST(BroadcastLike, symbolic_extent_difference_at_least_two) {
+  const uint32_t x_id = 0;
+  const uint32_t out_id = 1;
+  uint32_t stenciled_id = YNN_INVALID_VALUE_ID;
+  uint32_t pooled_id = YNN_INVALID_VALUE_ID;
+
+  SubgraphBuilder subgraph(2);
+  const uint32_t zero_id = subgraph.DefineScalar<float>(0.0f);
+  subgraph.AddInput(ynn_type_fp32, 1, x_id)
+      .AddOutput(ynn_type_fp32, 1, out_id)
+      .AddTensor(ynn_type_fp32, 2, stenciled_id)
+      .AddTensor(ynn_type_fp32, 1, pooled_id)
+      .AddStencilCopy({0}, {1}, {4}, {1}, {1}, x_id, YNN_INVALID_VALUE_ID,
+                      stenciled_id)
+      .AddReduce(ynn_reduce_sum, {1}, stenciled_id, zero_id, pooled_id);
+
+  const int32_t axes[] = {0};
+  uint32_t x_broadcast_id = YNN_INVALID_VALUE_ID;
+  ASSERT_EQ(ynn_define_broadcast_like(subgraph.GetSubgraph(), 1, axes, x_id,
+                                      pooled_id, &x_broadcast_id, /*flags=*/0),
+            ynn_status_success);
+  EXPECT_EQ(x_broadcast_id, x_id);
+
+  subgraph.AddBroadcastLike({0}, pooled_id, x_id, out_id);
+
+  Runtime runtime(subgraph.GetSubgraph());
+  ASSERT_EQ(runtime.Status(), ynn_status_success);
+
+  std::vector<float> x = {1.0f, 2.0f, 3.0f, 4.0f};
+  runtime.ReshapeExternalTensor({4}, x.data(), x_id).ReshapeRuntime();
+  ASSERT_EQ(runtime.Status(), ynn_status_success);
+  ASSERT_EQ(runtime.GetExternalTensorShape(out_id), (std::vector<size_t>{4}));
+
+  std::vector<float> out(4);
+  runtime.SetupExternalTensor(out.data(), out_id).InvokeRuntime();
+  ASSERT_EQ(runtime.Status(), ynn_status_success);
+  EXPECT_THAT(out, testing::ElementsAre(10.0f, 10.0f, 10.0f, 10.0f));
+
+  std::vector<float> x_invalid(5, 1.0f);
+  runtime.ReshapeExternalTensor({5}, x_invalid.data(), x_id);
+  EXPECT_EQ(runtime.ReshapeRuntime().Status(), ynn_status_invalid_parameter);
+}
+
 }  // namespace ynn
